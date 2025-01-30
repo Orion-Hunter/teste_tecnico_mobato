@@ -1,15 +1,20 @@
 import datetime
+import logging
 import os
 import pandas as pd
 from dotenv import load_dotenv
 from google.cloud import bigquery
 from google.oauth2 import service_account
 from pandas_gbq import to_gbq
+from concurrent.futures import ThreadPoolExecutor
+
+
 class ETLService:
 
     def __init__(self):
         load_dotenv()
-        self._credentials = service_account.Credentials.from_service_account_file(os.getenv('GOOGLE_APPLICATION_CREDENTIALS'))
+        self._credentials = service_account.Credentials.from_service_account_file(
+            os.getenv('GOOGLE_APPLICATION_CREDENTIALS'))
         self._client = bigquery.Client(credentials=self._credentials, project=self._credentials.project_id)
 
     def read_data(self):
@@ -59,10 +64,69 @@ class ETLService:
 
         return data
 
+    async def run_query(self, query):
+        job = self._client.query(query)
+        job.result()
+        logging.log(logging.INFO, f"Executado: {query} in Gold Layer")
+
+    async def create_tables_in_gold_layer(self):
+        query_average_mileage_by_fuel_type = '''
+         CREATE OR REPLACE TABLE `teste-tecnico-449001.gold_layer.avg_mileage_by_fuel_type` AS
+        SELECT
+        fuel,
+        round(AVG(odometer), 2) average_mileage
+        FROM `teste-tecnico-449001.silver_layer.used_cars`
+        group by 
+        fuel
+        '''
+        query_average_price_by_manufacturer = '''
+               CREATE OR REPLACE TABLE `teste-tecnico-449001.gold_layer.avg_price_by_manufacturer` AS
+SELECT
+manufacturer,
+count(*) ads,
+round(AVG(price), 2) average_mileage
+FROM `teste-tecnico-449001.silver_layer.used_cars`
+group by 
+manufacturer
+order by 2 desc
+limit 5
+                '''
+        query_localization = '''
+            CREATE OR REPLACE TABLE `teste-tecnico-449001.gold_layer.localization` AS
+SELECT
+lat,
+long,
+count(*) quantity
+FROM `teste-tecnico-449001.silver_layer.used_cars`
+group by lat,long
+        '''
+        query_price_by_mileage = '''
+           CREATE OR REPLACE TABLE `teste-tecnico-449001.gold_layer.price_by_mileage` AS
+SELECT
+price,
+odometer mileage
+FROM `teste-tecnico-449001.silver_layer.used_cars`
+
+        '''
+        prices_for_year = '''
+            CREATE OR REPLACE TABLE `teste-tecnico-449001.gold_layer.prices_for_year` AS
+SELECT
+price,
+year
+FROM `teste-tecnico-449001.silver_layer.used_cars`
+
+        '''
+
+        queries = [query_average_mileage_by_fuel_type, query_average_price_by_manufacturer,
+                   query_localization, query_price_by_mileage, prices_for_year]
+
+        with ThreadPoolExecutor() as executor:
+            executor.map(self.run_query, queries)
+
     async def load_data_in_bigquery(self, data: pd.DataFrame, table_id: str):
         try:
-            to_gbq(data, table_id, project_id=self._credentials.project_id, credentials=self._credentials, if_exists="replace")
+            to_gbq(data, table_id, project_id=self._credentials.project_id, credentials=self._credentials,
+                   if_exists="replace")
             return f"Enviado {len(data)} linhas para a tabela {table_id}."
         except Exception as e:
             return e
-

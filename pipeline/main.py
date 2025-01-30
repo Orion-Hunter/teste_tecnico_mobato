@@ -43,6 +43,14 @@ class App:
             logging.info(silver_layer)
         elif isinstance(silver_layer, Exception):
             logging.error(silver_layer)
+            return
+
+        gold_layer = await self._service.create_tables_in_gold_layer()
+
+        if isinstance(gold_layer, None):
+            logging.info('Gold Layer Data Available!')
+        else:
+            logging.error(gold_layer)
 
 
 if __name__ == '__main__':
